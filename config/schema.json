@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AstraFusionQuantConfig",
+  "description": "Configuration schema for ASTRA FUSION QUANT v1.0",
+  "type": "object",
+  "required": ["version", "style", "asset", "signal", "risk"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Config schema version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "style": {
+      "type": "string",
+      "enum": ["general", "scalp", "swing", "position", "custom"],
+      "description": "Trading style preset"
+    },
+    "timeframes": {
+      "type": "object",
+      "properties": {
+        "chart": {"type": "string", "description": "Chart timeframe e.g. 15m"},
+        "htf1":  {"type": "string", "description": "HTF1 must be > chart"},
+        "htf2":  {"type": "string", "description": "HTF2 must be > htf1"}
+      }
+    },
+    "pivots": {
+      "type": "object",
+      "properties": {
+        "internal_L": {"type": "integer", "minimum": 1, "description": "Left bars for internal pivots"},
+        "internal_R": {"type": "integer", "minimum": 1},
+        "external_L": {"type": "integer", "minimum": 1, "description": "Left bars for external structure"},
+        "external_R": {"type": "integer", "minimum": 1}
+      }
+    },
+    "signal": {
+      "type": "object",
+      "properties": {
+        "score_floor":  {"type": "number", "minimum": 65, "maximum": 95, "description": "Minimum SideQuality to emit"},
+        "emit_tier_b":  {"type": "boolean", "description": "Emit B-tier (score 65-74); opt-in"},
+        "cooldown_bars":{"type": "integer", "minimum": 0, "description": "Chart bars between signals"}
+      }
+    },
+    "asset": {
+      "type": "string",
+      "enum": ["crypto", "forex", "commodities", "stocks", "indices", "auto"],
+      "description": "Asset class overlay"
+    },
+    "risk": {
+      "type": "object",
+      "properties": {
+        "budget_pct":      {"type": "number", "description": "Simulated risk per trade as % of equity (unvalidated default 0.25)"},
+        "stop_min_atr":    {"type": "number", "description": "Minimum stop distance in ATR units"},
+        "stop_max_atr":    {"type": "number", "description": "Maximum stop distance in ATR units"},
+        "rr_min_net":      {"type": "number", "description": "Minimum net reward/risk ratio"},
+        "max_cost_pct_stop":{"type": "number", "description": "Max friction as fraction of stop distance"},
+        "target_mode":     {"type": "string", "enum": ["fixed_rr", "structure"], "description": "How targets are computed"}
+      }
+    },
+    "zones": {
+      "type": "object",
+      "properties": {
+        "fvg_enabled":          {"type": "boolean"},
+        "ob_enabled":           {"type": "boolean"},
+        "breaker_enabled":      {"type": "boolean", "description": "Optional; off by default"},
+        "inverse_fvg_enabled":  {"type": "boolean", "description": "Optional; off by default"},
+        "zone_expiry_bars":     {"type": "integer"},
+        "max_active_levels":    {"type": "integer", "maximum": 30}
+      }
+    },
+    "regime": {
+      "type": "object",
+      "properties": {
+        "adx_trend_min":   {"type": "number", "description": "ADX threshold for trend state (unvalidated: 23)"},
+        "adx_range_max":   {"type": "number", "description": "ADX threshold for range state (unvalidated: 18)"},
+        "er_trend_min":    {"type": "number", "description": "ER20 for trend (unvalidated: 0.30)"},
+        "er_range_max":    {"type": "number", "description": "ER20 for range (unvalidated: 0.25)"},
+        "vol_extreme_pct": {"type": "number", "description": "NATR percentile for EXTREME vol (unvalidated: 95)"},
+        "vol_high_pct":    {"type": "number", "description": "NATR percentile for HIGH vol (unvalidated: 80)"},
+        "vol_low_pct":     {"type": "number", "description": "NATR percentile for LOW vol (unvalidated: 20)"}
+      }
+    },
+    "warmup": {
+      "type": "object",
+      "properties": {
+        "chart_bars": {"type": "integer", "description": "Minimum chart bars before signals (600)"},
+        "htf_bars":   {"type": "integer", "description": "Minimum completed HTF bars (250)"}
+      }
+    }
+  }
+}

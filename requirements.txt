@@ -1,0 +1,16 @@
+# ASTRA FUSION QUANT — Python Dependencies
+# Python 3.12+
+# Pin exact versions for reproducibility
+
+numpy==1.26.4
+pandas==2.2.2
+scipy==1.13.1
+matplotlib==3.9.0
+pytest==8.2.2
+pytest-cov==5.0.0
+yfinance==0.2.40
+pyarrow==16.1.0
+python-dateutil==2.9.0.post0
+pytz==2024.1
+# Optional — only for ML meta-filter (M7, disabled by default)
+scikit-learn==1.5.0

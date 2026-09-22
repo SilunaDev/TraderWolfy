@@ -1,0 +1,2 @@
+trial_id,date_utc,component,description,config_hash,instrument,timeframe,dev_expectancy_r,val_expectancy_r,status,notes
+0,2026-09-17,system,Initial implementation,N/A,N/A,N/A,N/A,N/A,IN_PROGRESS,Baseline implementation — no backtest results yet

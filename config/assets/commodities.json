@@ -1,0 +1,20 @@
+{
+  "asset": "commodities",
+  "session_type": "exchange_hours",
+  "sessions": {
+    "xauusd_spot": {"note": "Continuous via FX brokers; use forex session hours"},
+    "gold_futures": {"exchange": "COMEX", "open": "17:00", "close": "16:00", "tz": "US/Eastern", "note": "Nearly 23-hour session with a 1-hour break"}
+  },
+  "volume_type": "exchange_volume",
+  "volume_label": "Exchange Volume",
+  "funding_rate_applicable": false,
+  "short_allowed": true,
+  "roll_handling": "explicit_contract_or_declared_proxy",
+  "costs": {
+    "commission_per_side_pct": 0.05,
+    "slippage_ticks": 1,
+    "_note": "Illustrative — replace with actual venue/broker rates. INCOMPLETE without verified rates."
+  },
+  "supported_instruments": ["XAUUSD", "XAGUSD", "USOIL"],
+  "_note": "Distinguish spot/CFD proxy from actual futures contract. Backtest on the actual traded product."
+}

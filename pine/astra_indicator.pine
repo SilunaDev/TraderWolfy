@@ -1,0 +1,500 @@
+//@version=6
+indicator("ASTRA FUSION QUANT [System]", shorttitle="ASTRA", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500, max_bars_back=5000)
+
+// =================================================================================================
+// ASTRA FUSION QUANT — Complete System Implementation (Pine v6)
+// Version 1.0
+// =================================================================================================
+
+// -------------------------------------------------------------------------------------------------
+// 1. INPUT GROUPS
+// -------------------------------------------------------------------------------------------------
+group_gen   = "General"
+group_sig   = "Signal Quality"
+group_style = "Style"
+group_str   = "Structure"
+group_smc   = "SMC / Zones"
+group_trend = "Trend & Regime"
+group_mom   = "Momentum"
+group_div   = "Divergence"
+group_lvl   = "Levels & Fib"
+group_vol   = "Volume"
+group_vola  = "Volatility"
+group_mtf   = "MTF Settings"
+group_risk  = "Risk & Execution"
+group_vis   = "Visuals & Dashboard"
+group_alert = "Alerts"
+group_adv   = "Advanced"
+
+// General Inputs
+i_preset    = input.string("Intraday", "System Preset", options=["Intraday", "Scalp", "Swing", "Position"], group=group_gen)
+
+// Signal Quality
+i_score_flr = input.float(75.0, "Score Floor", minval=0, maxval=100, group=group_sig)
+i_cooldown  = input.int(5, "Setup Cooldown (Bars)", minval=0, group=group_sig)
+
+// MTF Settings
+i_htf1      = input.timeframe("60", "HTF 1 (Bias)", group=group_mtf)
+i_htf2      = input.timeframe("240", "HTF 2 (Context)", group=group_mtf)
+
+// Risk & Execution
+i_risk_pct  = input.float(1.0, "Risk per Trade (%)", minval=0.1, group=group_risk)
+i_rr_min    = input.float(1.5, "Min Net RR", minval=0.1, group=group_risk)
+i_stop_buf  = input.float(0.15, "Stop Buffer (ATR)", minval=0.0, group=group_risk)
+i_fric_pct  = input.float(0.10, "Friction Cost (%)", minval=0.0, group=group_risk)
+
+// Visuals
+i_show_dash  = input.bool(true, "Show Dashboard", group=group_vis)
+i_dash_pos   = input.string("Top Right", "Dashboard Position", options=["Top Right", "Bottom Right", "Top Left", "Bottom Left"], group=group_vis)
+
+// Stats tracking
+i_track_from = input.time(timestamp("2026-09-17 00:00"), "Track Stats From Date", group=group_vis, tooltip="Only count signals AFTER this date in Live Stats. Set to your testing start date.")
+
+// -------------------------------------------------------------------------------------------------
+// 2. CORE PRIMITIVES (M1)
+// -------------------------------------------------------------------------------------------------
+atr_len = 14
+A = ta.atr(atr_len)
+
+// Trend Score T calculation
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+f_clip(val, minv, maxv) => math.max(minv, math.min(val, maxv))
+
+t_part1 = f_clip((ema20 - ema50) / nz(A[1]), -1, 1)
+t_part2 = f_clip((ema50 - nz(ema50[5])) / nz(A[1]), -1, 1)
+t_part3 = math.sign(close - ema200)
+trend_score = f_clip(0.4 * t_part1 + 0.3 * t_part2 + 0.3 * t_part3, -1, 1)
+
+// Volatility (NATR Percentile approx)
+natr = (A / close) * 100
+natr_perc = ta.percentrank(natr, 100)
+vola_state = natr_perc > 95 ? "EXTREME" : natr_perc > 75 ? "HIGH" : natr_perc < 25 ? "LOW" : "NORMAL"
+
+// RSI & ER
+rsi14 = ta.rsi(close, 14)
+change1 = math.abs(close - nz(close[1]))
+change20 = math.abs(close - nz(close[20]))
+sum_change = math.sum(change1, 20)
+er20 = sum_change == 0 ? 0.0 : change20 / sum_change
+
+// -------------------------------------------------------------------------------------------------
+// 3. HTF CONTEXT (M1)
+// -------------------------------------------------------------------------------------------------
+// MUST USE: request.security(sym, htf, expr[1], barmerge.gaps_off, barmerge.lookahead_on)
+f_htf_trend() =>
+    t1 = f_clip((ta.ema(close, 20) - ta.ema(close, 50)) / nz(ta.atr(14)[1]), -1, 1)
+    t2 = f_clip((ta.ema(close, 50) - nz(ta.ema(close, 50)[5])) / nz(ta.atr(14)[1]), -1, 1)
+    t3 = math.sign(close - ta.ema(close, 200))
+    f_clip(0.4 * t1 + 0.3 * t2 + 0.3 * t3, -1, 1)
+
+htf1_t = request.security(syminfo.tickerid, i_htf1, f_htf_trend()[1], barmerge.gaps_off, barmerge.lookahead_on)
+htf2_t = request.security(syminfo.tickerid, i_htf2, f_htf_trend()[1], barmerge.gaps_off, barmerge.lookahead_on)
+
+htf1_bias = htf1_t >= 0.35 ? "BULLISH" : htf1_t <= -0.35 ? "BEARISH" : "NEUTRAL"
+htf2_bias = htf2_t >= 0.35 ? "BULLISH" : htf2_t <= -0.35 ? "BEARISH" : "NEUTRAL"
+
+// -------------------------------------------------------------------------------------------------
+// 4. STRUCTURE & ZONES (M2)
+// -------------------------------------------------------------------------------------------------
+// Simplified Pivot Detection
+pivot_len = 3
+piv_high = ta.pivothigh(high, pivot_len, pivot_len)
+piv_low  = ta.pivotlow(low, pivot_len, pivot_len)
+
+var float last_high = na
+var float last_low = na
+if not na(piv_high)
+    last_high := piv_high
+if not na(piv_low)
+    last_low := piv_low
+
+// Displacement check
+is_displacement = math.abs(close - open) >= 0.8 * A and (high - low) >= 1.2 * A
+
+// FVG Detection
+var float fvg_top = na
+var float fvg_bot = na
+var bool in_fvg = false
+bull_fvg = low > high[2] and is_displacement[1]
+bear_fvg = high < low[2] and is_displacement[1]
+if bull_fvg
+    fvg_bot := high[2]
+    fvg_top := low
+    in_fvg := true
+if bear_fvg
+    fvg_top := low[2]
+    fvg_bot := high
+    in_fvg := true
+
+// -------------------------------------------------------------------------------------------------
+// 5. REGIME (M2)
+// -------------------------------------------------------------------------------------------------
+regime = trend_score >= 0.4 ? "BULL_TREND" : trend_score <= -0.4 ? "BEAR_TREND" : math.abs(trend_score) < 0.2 ? "RANGE" : "TRANSITION"
+
+// -------------------------------------------------------------------------------------------------
+// 6. ENHANCED SCORING ENGINE
+// Multi-condition scoring — each condition contributes points
+// -------------------------------------------------------------------------------------------------
+
+// === STRUCTURE FAMILY (S) ===
+// Price position relative to EMAs — all must be aligned
+ema_stack_bull = close > ema20 and ema20 > ema50 and close > ema200
+ema_stack_bear = close < ema20 and ema20 < ema50 and close < ema200
+S_score_bull = ema_stack_bull ? 1.0 : close > ema50 and close > ema200 ? 0.5 : 0.0
+S_score_bear = ema_stack_bear ? 1.0 : close < ema50 and close < ema200 ? 0.5 : 0.0
+
+// === TREND FAMILY (T) ===
+// Trend score must be strongly directional
+T_score_bull = trend_score >= 0.5 ? 1.0 : trend_score >= 0.35 ? 0.5 : 0.0
+T_score_bear = trend_score <= -0.5 ? 1.0 : trend_score <= -0.35 ? 0.5 : 0.0
+
+// === MOMENTUM FAMILY (M) ===
+// RSI must confirm direction — not overbought for longs, not oversold for shorts
+rsi_bull = rsi14 > 50 and rsi14 < 75   // Bullish momentum, not overbought
+rsi_bear = rsi14 < 50 and rsi14 > 25   // Bearish momentum, not oversold
+M_score_bull = rsi_bull ? (rsi14 > 60 ? 1.0 : 0.5) : 0.0
+M_score_bear = rsi_bear ? (rsi14 < 40 ? 1.0 : 0.5) : 0.0
+
+// === VOLATILITY/MOMENTUM STRENGTH (V) ===
+// ADX for trend strength — only trade strong trends
+[dmi_plus, dmi_minus, adx14] = ta.dmi(14, 14)
+adx_strong = adx14 > 20    // Trend is strong enough to trade
+V_score_bull = adx_strong and dmi_plus > dmi_minus ? 1.0 : 0.0
+V_score_bear = adx_strong and dmi_minus > dmi_plus ? 1.0 : 0.0
+
+// === LEVEL/ZONE FAMILY (L) ===
+// FVG or price at key level
+L_score_bull = in_fvg and bull_fvg ? 1.0 : 0.5
+L_score_bear = in_fvg and bear_fvg ? 1.0 : 0.5
+
+// === WEIGHTED ENSEMBLE ===
+// Weights: S=25%, T=30%, M=20%, V=15%, L=10%
+raw_bull = 0.25*S_score_bull + 0.30*T_score_bull + 0.20*M_score_bull + 0.15*V_score_bull + 0.10*L_score_bull
+raw_bear = 0.25*S_score_bear + 0.30*T_score_bear + 0.20*M_score_bear + 0.15*V_score_bear + 0.10*L_score_bear
+
+side_bull = raw_bull * 100  // Scale to 0-100
+side_bear = raw_bear * 100
+
+// -------------------------------------------------------------------------------------------------
+// 7. STRICT SIGNAL GATES — Every gate must pass
+// -------------------------------------------------------------------------------------------------
+warming_up = bar_index < 600
+
+// Gate 1: No extreme volatility
+gate_vol = vola_state != "EXTREME"
+
+// Gate 2: No LOW volatility for Gold — choppy/trappy, stops get hunted
+gate_not_low_vol = vola_state != "LOW"
+
+// Gate 3: BOTH HTF1 and HTF2 must agree (not just HTF1)
+gate_htf_bull = htf1_bias == "BULLISH" and htf2_bias != "BEARISH"
+gate_htf_bear = htf1_bias == "BEARISH" and htf2_bias != "BULLISH"
+
+// Gate 4: Regime must be trending (no signals in RANGE or TRANSITION)
+gate_regime_bull = regime == "BULL_TREND"
+gate_regime_bear = regime == "BEAR_TREND"
+
+// Gate 5: RSI not extreme
+gate_rsi_bull = rsi14 < 78
+gate_rsi_bear = rsi14 > 22
+
+// Gate 6: ADX shows real trend strength (relaxed slightly)
+gate_adx = adx14 > 18
+
+// Gate 7: Displacement candle required
+gate_disp = is_displacement
+
+// Gate 8: Session filter (widened to include pre-London)
+bar_hour_utc = hour(time, "UTC")
+gate_session = bar_hour_utc >= 6 and bar_hour_utc < 21
+
+// Dynamic score floor — raise bar during LOW volatility instead of hard block
+eff_score_floor = vola_state == "LOW" ? i_score_flr + 10 : i_score_flr
+
+// Combine ALL gates
+valid_long  = not warming_up and gate_vol and gate_htf_bull and gate_regime_bull and gate_rsi_bull and gate_adx and gate_disp and gate_session and side_bull > eff_score_floor
+valid_short = not warming_up and gate_vol and gate_htf_bear and gate_regime_bear and gate_rsi_bear and gate_adx and gate_disp and gate_session and side_bear > eff_score_floor
+
+// -------------------------------------------------------------------------------------------------
+// 8. SIGNAL GENERATION
+// -------------------------------------------------------------------------------------------------
+var int last_signal_bar = -999
+in_cooldown = (bar_index - last_signal_bar) <= i_cooldown
+
+// Apply cooldown last
+valid_long  := valid_long  and not in_cooldown
+valid_short := valid_short and not in_cooldown
+
+// Stop & Target Calculations
+i_stop_mult = input.float(2.5, "Stop Distance (ATR multiplier)", minval=0.5, maxval=5.0, step=0.1, group=group_risk, tooltip="ATRs for stop. Gold: 2.0-3.0")
+stop_long  = close - (A * i_stop_mult)
+stop_short = close + (A * i_stop_mult)
+tp1_long   = close + (close - stop_long)  * i_rr_min
+tp1_short  = close - (stop_short - close) * i_rr_min
+tp2_long   = close + (close - stop_long)  * 2.0
+tp2_short  = close - (stop_short - close) * 2.0
+tp3_long   = close + (close - stop_long)  * 3.0
+tp3_short  = close - (stop_short - close) * 3.0
+
+var float entry_px = na
+var float stop_px = na
+var float tp_px = na
+var float tp2_px = na
+var float tp3_px = na
+var string last_side = "NONE"
+
+if valid_long
+    last_signal_bar := bar_index
+    entry_px := close
+    stop_px := stop_long
+    tp_px := tp1_long
+    tp2_px := tp2_long
+    tp3_px := tp3_long
+    last_side := "BUY"
+
+if valid_short
+    last_signal_bar := bar_index
+    entry_px := close
+    stop_px := stop_short
+    tp_px := tp1_short
+    tp2_px := tp2_short
+    tp3_px := tp3_short
+    last_side := "SELL"
+
+// -------------------------------------------------------------------------------------------------
+// 8b. AUTO TRADE RESULT TRACKER
+// Automatically detects when SL or TP1 is hit after a signal fires
+// Line/label vars declared here so tracker can reference them
+// -------------------------------------------------------------------------------------------------
+
+// Line and label variables (declared here — used by both tracker and visuals)
+var line l_entry = na
+var line l_stop  = na
+var line l_tp    = na
+var line l_tp2   = na
+var line l_tp3   = na
+var label lbl_entry = na
+var label lbl_stop  = na
+var label lbl_tp    = na
+var label lbl_tp2   = na
+var label lbl_tp3   = na
+
+// Tracker counters
+var int   total_trades  = 0
+var int   total_wins    = 0
+var int   total_losses  = 0
+var float total_r       = 0.0
+var bool  trade_active  = false
+var float track_entry   = na
+var float track_stop    = na
+var float track_tp1     = na
+var string track_side   = "NONE"
+var string last_result  = "—"
+
+// When new signal fires, start tracking (only after user's chosen start date)
+is_tracking_period = time >= i_track_from
+if (valid_long or valid_short) and is_tracking_period
+    trade_active := true
+    total_trades := total_trades + 1
+    track_entry  := entry_px
+    track_stop   := stop_px
+    track_tp1    := tp_px
+    track_side   := last_side
+    last_result  := "OPEN"
+
+// Check result on every bar while trade is active
+if trade_active and not na(track_entry)
+    sl_hit = track_side == "BUY"  ? low  <= track_stop : high >= track_stop
+    tp_hit = track_side == "BUY"  ? high >= track_tp1  : low  <= track_tp1
+
+    if tp_hit
+        // TP hit first → WIN
+        total_wins   := total_wins + 1
+        total_r      := total_r + i_rr_min
+        trade_active := false
+        last_result  := "✅ WIN +" + str.tostring(i_rr_min, "#.#") + "R"
+        label.new(bar_index, high, "✅ TP1 HIT", style=label.style_label_down, color=color.green, textcolor=color.white, size=size.normal)
+        // Clean up lines
+        if not na(l_entry)
+            line.set_color(l_entry, color.new(color.green, 50))
+        if not na(l_stop)
+            line.delete(l_stop)
+        if not na(l_tp)
+            line.set_color(l_tp, color.new(color.green, 20))
+        if not na(l_tp2)
+            line.delete(l_tp2)
+        if not na(l_tp3)
+            line.delete(l_tp3)
+        if not na(lbl_stop)
+            label.delete(lbl_stop)
+        if not na(lbl_tp2)
+            label.delete(lbl_tp2)
+        if not na(lbl_tp3)
+            label.delete(lbl_tp3)
+
+    else if sl_hit
+        // SL hit first → LOSS
+        total_losses := total_losses + 1
+        total_r      := total_r - 1.0
+        trade_active := false
+        last_result  := "❌ SL -1R"
+        label.new(bar_index, low, "❌ SL HIT", style=label.style_label_up, color=color.red, textcolor=color.white, size=size.normal)
+        // Reset dashboard prices → shows WAITING until next signal
+        entry_px  := na
+        stop_px   := na
+        tp_px     := na
+        tp2_px    := na
+        tp3_px    := na
+        last_side := "NONE"
+        // Clean up ALL lines — trade is dead
+        if not na(l_entry)
+            line.delete(l_entry)
+        if not na(l_stop)
+            line.delete(l_stop)
+        if not na(l_tp)
+            line.delete(l_tp)
+        if not na(l_tp2)
+            line.delete(l_tp2)
+        if not na(l_tp3)
+            line.delete(l_tp3)
+        if not na(lbl_entry)
+            label.delete(lbl_entry)
+        if not na(lbl_stop)
+            label.delete(lbl_stop)
+        if not na(lbl_tp)
+            label.delete(lbl_tp)
+        if not na(lbl_tp2)
+            label.delete(lbl_tp2)
+        if not na(lbl_tp3)
+            label.delete(lbl_tp3)
+
+win_rate = total_trades > 0 ? (total_wins / total_trades) * 100 : 0.0
+
+// -------------------------------------------------------------------------------------------------
+// 9. VISUALS
+// -------------------------------------------------------------------------------------------------
+plotshape(valid_long, "Buy Signal", shape.triangleup, location.belowbar, color.green, size=size.small)
+plotshape(valid_short, "Sell Signal", shape.triangledown, location.abovebar, color.red, size=size.small)
+
+// (line/label vars declared in section 8b above)
+
+if valid_long or valid_short
+    // Delete old lines and labels
+    if not na(l_entry)
+        line.delete(l_entry)
+    if not na(l_stop)
+        line.delete(l_stop)
+    if not na(l_tp)
+        line.delete(l_tp)
+    if not na(l_tp2)
+        line.delete(l_tp2)
+    if not na(l_tp3)
+        line.delete(l_tp3)
+    if not na(lbl_entry)
+        label.delete(lbl_entry)
+    if not na(lbl_stop)
+        label.delete(lbl_stop)
+    if not na(lbl_tp)
+        label.delete(lbl_tp)
+    if not na(lbl_tp2)
+        label.delete(lbl_tp2)
+    if not na(lbl_tp3)
+        label.delete(lbl_tp3)
+    
+    // Draw new lines
+    l_entry := line.new(bar_index, entry_px, bar_index+20, entry_px, color=color.white, style=line.style_solid, width=1)
+    l_stop := line.new(bar_index, stop_px, bar_index+20, stop_px, color=color.red, style=line.style_dashed, width=2)
+    l_tp := line.new(bar_index, tp_px, bar_index+20, tp_px, color=color.green, style=line.style_dashed, width=1)
+    l_tp2 := line.new(bar_index, tp2_px, bar_index+20, tp2_px, color=color.lime, style=line.style_dashed, width=1)
+    l_tp3 := line.new(bar_index, tp3_px, bar_index+20, tp3_px, color=color.teal, style=line.style_dashed, width=1)
+    
+    // Draw labels
+    lbl_entry := label.new(bar_index+21, entry_px, "ENTRY " + str.tostring(entry_px, "#.##"), style=label.style_label_left, color=color.new(color.white, 80), textcolor=color.white, size=size.small)
+    lbl_stop := label.new(bar_index+21, stop_px, "SL " + str.tostring(stop_px, "#.##"), style=label.style_label_left, color=color.new(color.red, 80), textcolor=color.red, size=size.small)
+    lbl_tp := label.new(bar_index+21, tp_px, "TP1 " + str.tostring(tp_px, "#.##"), style=label.style_label_left, color=color.new(color.green, 80), textcolor=color.green, size=size.small)
+    lbl_tp2 := label.new(bar_index+21, tp2_px, "TP2 " + str.tostring(tp2_px, "#.##"), style=label.style_label_left, color=color.new(color.lime, 80), textcolor=color.lime, size=size.small)
+    lbl_tp3 := label.new(bar_index+21, tp3_px, "TP3 " + str.tostring(tp3_px, "#.##"), style=label.style_label_left, color=color.new(color.teal, 80), textcolor=color.teal, size=size.small)
+
+// -------------------------------------------------------------------------------------------------
+// 10. DASHBOARD
+// -------------------------------------------------------------------------------------------------
+var table dash = table.new(i_dash_pos == "Top Right" ? position.top_right : position.bottom_right, 3, 25, bgcolor=color.new(color.black, 10), border_width=1)
+
+if i_show_dash and barstate.islast
+    table.cell(dash, 0, 0, "ASTRA FUSION", text_color=color.white, text_size=size.small, bgcolor=color.blue)
+    table.cell(dash, 1, 0, "QUANT 1.0", text_color=color.white, text_size=size.small, bgcolor=color.blue)
+    
+    table.cell(dash, 0, 1, "Status", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 1, warming_up ? "WARMING UP" : "READY", text_color=warming_up ? color.orange : color.green, text_size=size.small)
+    
+    table.cell(dash, 0, 2, "Regime", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 2, regime, text_color=color.white, text_size=size.small)
+    
+    table.cell(dash, 0, 3, "Volatility", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 3, vola_state, text_color=color.white, text_size=size.small)
+    
+    table.cell(dash, 0, 4, "HTF1 Bias", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 4, htf1_bias, text_color=htf1_bias=="BULLISH" ? color.green : htf1_bias=="BEARISH" ? color.red : color.gray, text_size=size.small)
+
+    table.cell(dash, 0, 5, "Bull Quality", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 5, str.tostring(side_bull, "#.##"), text_color=color.green, text_size=size.small)
+    
+    table.cell(dash, 0, 6, "Bear Quality", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 6, str.tostring(side_bear, "#.##"), text_color=color.red, text_size=size.small)
+    
+    table.cell(dash, 0, 7, "Latest Signal", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 7, last_side, text_color=last_side=="BUY" ? color.green : last_side=="SELL" ? color.red : color.gray, text_size=size.small)
+
+    table.cell(dash, 0, 8, "Entry Price", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 8, na(entry_px) ? "WAITING" : str.tostring(entry_px, "#.##"), text_color=color.white, text_size=size.small)
+
+    table.cell(dash, 0, 9, "Stop Loss", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 9, na(stop_px) ? "-" : str.tostring(stop_px, "#.##"), text_color=color.red, text_size=size.small)
+
+    table.cell(dash, 0, 10, "TP1 (1.5:1)", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 10, na(tp_px) ? "-" : str.tostring(tp_px, "#.##"), text_color=color.green, text_size=size.small)
+
+    table.cell(dash, 0, 11, "TP2 (2:1)", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 11, na(tp2_px) ? "-" : str.tostring(tp2_px, "#.##"), text_color=color.lime, text_size=size.small)
+
+    table.cell(dash, 0, 12, "TP3 (3:1)", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 12, na(tp3_px) ? "-" : str.tostring(tp3_px, "#.##"), text_color=color.teal, text_size=size.small)
+
+    table.cell(dash, 0, 13, "Stop ATR Mult", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 13, str.tostring(i_stop_mult, "#.#"), text_color=color.white, text_size=size.small)
+
+    // ── LIVE STATS SECTION ──
+    table.cell(dash, 0, 14, "━━ LIVE STATS ━━", text_color=color.yellow, text_size=size.small, bgcolor=color.new(color.black, 50))
+    table.cell(dash, 1, 14, "", text_color=color.gray, text_size=size.small, bgcolor=color.new(color.black, 50))
+
+    table.cell(dash, 0, 15, "Total Signals", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 15, str.tostring(total_trades), text_color=color.white, text_size=size.small)
+
+    table.cell(dash, 0, 16, "Wins", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 16, str.tostring(total_wins), text_color=color.green, text_size=size.small)
+
+    table.cell(dash, 0, 17, "Losses", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 17, str.tostring(total_losses), text_color=color.red, text_size=size.small)
+
+    table.cell(dash, 0, 18, "Win Rate", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 18, str.tostring(win_rate, "#.#") + "%", text_color=win_rate >= 50 ? color.green : color.red, text_size=size.small)
+
+    table.cell(dash, 0, 19, "Total R", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 19, (total_r >= 0 ? "+" : "") + str.tostring(total_r, "#.##") + "R", text_color=total_r >= 0 ? color.green : color.red, text_size=size.small)
+
+    table.cell(dash, 0, 20, "Last Result", text_color=color.gray, text_size=size.small)
+    table.cell(dash, 1, 20, last_result, text_color=str.contains(last_result, "WIN") ? color.green : str.contains(last_result, "SL") ? color.red : color.yellow, text_size=size.small)
+
+// -------------------------------------------------------------------------------------------------
+// 11. ALERTS
+// -------------------------------------------------------------------------------------------------
+alert_json_long = '{"symbol": "' + syminfo.ticker + '", "side": "BUY", "entry": ' + str.tostring(entry_px) + ', "stop": ' + str.tostring(stop_px) + ', "tp": ' + str.tostring(tp_px) + '}'
+alert_json_short = '{"symbol": "' + syminfo.ticker + '", "side": "SELL", "entry": ' + str.tostring(entry_px) + ', "stop": ' + str.tostring(stop_px) + ', "tp": ' + str.tostring(tp_px) + '}'
+
+if valid_long
+    alert(alert_json_long, alert.freq_once_per_bar_close)
+if valid_short
+    alert(alert_json_short, alert.freq_once_per_bar_close)

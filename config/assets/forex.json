@@ -1,0 +1,24 @@
+{
+  "asset": "forex",
+  "session_type": "exchange_hours",
+  "sessions": {
+    "sydney":  {"open": "21:00", "close": "06:00", "tz": "UTC"},
+    "tokyo":   {"open": "23:00", "close": "08:00", "tz": "UTC"},
+    "london":  {"open": "07:00", "close": "16:00", "tz": "UTC"},
+    "new_york":{"open": "12:00", "close": "21:00", "tz": "UTC"}
+  },
+  "volume_type": "tick_volume",
+  "volume_label": "Tick Volume (not exchange volume — label accordingly)",
+  "volume_family_enabled": false,
+  "funding_rate_applicable": false,
+  "short_allowed": true,
+  "pip_note": "Set pip/tick size per pair in instrument metadata",
+  "costs": {
+    "spread_pips": 1.0,
+    "commission_per_side_pct": 0.0,
+    "slippage_ticks": 1,
+    "_note": "Illustrative spread — replace with actual broker data. INCOMPLETE without verified rates."
+  },
+  "supported_instruments": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD"],
+  "_note": "XAUUSD is included here as it trades via FX brokers; also see commodities.json"
+}

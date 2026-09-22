@@ -1,0 +1,20 @@
+{
+  "asset": "crypto",
+  "session_type": "24_7",
+  "session_reset_utc": "00:00",
+  "volume_type": "exchange_volume",
+  "volume_label": "Exchange Volume",
+  "funding_rate_applicable": true,
+  "short_allowed_spot": false,
+  "short_allowed_perp": true,
+  "long_only_spot_baseline": true,
+  "tick_size_note": "Set per exchange/pair in instrument metadata",
+  "costs": {
+    "commission_per_side_pct": 0.10,
+    "slippage_ticks": 1,
+    "funding_per_8h_pct": 0.01,
+    "_note": "Illustrative only — replace with actual venue rates. INCOMPLETE without verified rates."
+  },
+  "supported_instruments": ["BTCUSDT", "ETHUSDT", "BTCUSD", "ETHUSD"],
+  "_note": "Spot and perpetual are different products. Set product type explicitly."
+}

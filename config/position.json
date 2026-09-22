@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "style": "position",
+  "timeframes": {"chart": "1D", "htf1": "1W", "htf2": "1M"},
+  "pivots": {"internal_L": 3, "internal_R": 3, "external_L": 5, "external_R": 5},
+  "signal": {"score_floor": 75, "emit_tier_b": false, "cooldown_bars": 2},
+  "asset": "auto",
+  "risk": {
+    "budget_pct": 0.25,
+    "stop_min_atr": 0.5,
+    "stop_max_atr": 3.0,
+    "rr_min_net": 1.5,
+    "max_cost_pct_stop": 0.20,
+    "target_mode": "structure"
+  },
+  "zones": {
+    "fvg_enabled": true,
+    "ob_enabled": true,
+    "breaker_enabled": false,
+    "inverse_fvg_enabled": false,
+    "zone_expiry_bars": 100,
+    "max_active_levels": 30
+  },
+  "regime": {
+    "adx_trend_min": 23, "adx_range_max": 18,
+    "er_trend_min": 0.30, "er_range_max": 0.25,
+    "vol_extreme_pct": 95, "vol_high_pct": 80, "vol_low_pct": 20
+  },
+  "warmup": {"chart_bars": 600, "htf_bars": 250},
+  "_note": "All numerical thresholds are UNVALIDATED starting hypotheses"
+}

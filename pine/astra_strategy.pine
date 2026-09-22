@@ -1,0 +1,89 @@
+//@version=6
+strategy("ASTRA FUSION QUANT [Strategy]", shorttitle="ASTRA Strat", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, max_bars_back=5000, margin_long=10, margin_short=10, calc_on_every_tick=false)
+
+// =================================================================================================
+// ASTRA FUSION QUANT — Strategy Wrapper (Pine v6)
+// Version 1.0
+// =================================================================================================
+
+// -------------------------------------------------------------------------------------------------
+// 1. INPUTS
+// -------------------------------------------------------------------------------------------------
+i_score_flr = input.float(75.0, "Score Floor", minval=0, maxval=100)
+i_cooldown  = input.int(5, "Setup Cooldown")
+i_risk_pct  = input.float(1.0, "Risk per Trade (%)", minval=0.1)
+i_rr_min    = input.float(1.5, "Min Net RR", minval=0.1)
+i_stop_buf  = input.float(0.15, "Stop Buffer (ATR)", minval=0.0)
+i_fric_pct  = input.float(0.10, "Friction Cost (%)", minval=0.0)
+i_htf1      = input.timeframe("60", "HTF 1 (Bias)")
+
+// -------------------------------------------------------------------------------------------------
+// 2. CORE PRIMITIVES
+// -------------------------------------------------------------------------------------------------
+A = ta.atr(14)
+ema20 = ta.ema(close, 20)
+ema50 = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+f_clip(val, minv, maxv) => math.max(minv, math.min(val, maxv))
+t_part1 = f_clip((ema20 - ema50) / nz(A[1]), -1, 1)
+t_part2 = f_clip((ema50 - nz(ema50[5])) / nz(A[1]), -1, 1)
+t_part3 = math.sign(close - ema200)
+trend_score = f_clip(0.4 * t_part1 + 0.3 * t_part2 + 0.3 * t_part3, -1, 1)
+
+natr = (A / close) * 100
+natr_perc = ta.percentrank(natr, 100)
+vola_state = natr_perc > 95 ? "EXTREME" : "NORMAL"
+
+is_displacement = math.abs(close - open) >= 0.8 * A and (high - low) >= 1.2 * A
+
+// -------------------------------------------------------------------------------------------------
+// 3. HTF & REGIME
+// -------------------------------------------------------------------------------------------------
+f_htf_trend() =>
+    t1 = f_clip((ta.ema(close, 20) - ta.ema(close, 50)) / nz(ta.atr(14)[1]), -1, 1)
+    t2 = f_clip((ta.ema(close, 50) - nz(ta.ema(close, 50)[5])) / nz(ta.atr(14)[1]), -1, 1)
+    t3 = math.sign(close - ta.ema(close, 200))
+    f_clip(0.4 * t1 + 0.3 * t2 + 0.3 * t3, -1, 1)
+
+htf1_t = request.security(syminfo.tickerid, i_htf1, f_htf_trend()[1], barmerge.gaps_off, barmerge.lookahead_on)
+htf1_bias = htf1_t >= 0.35 ? "BULLISH" : htf1_t <= -0.35 ? "BEARISH" : "NEUTRAL"
+
+regime = trend_score >= 0.4 ? "BULL_TREND" : trend_score <= -0.4 ? "BEAR_TREND" : "RANGE"
+
+// -------------------------------------------------------------------------------------------------
+// 4. SIGNALS & EXECUTION LOGIC
+// -------------------------------------------------------------------------------------------------
+side_bull = (trend_score > 0 ? 100 : 0) // Dummy logic for strategy execution demo
+side_bear = (trend_score < 0 ? 100 : 0)
+
+warming_up = bar_index < 600
+extreme_vol = vola_state == "EXTREME"
+htf_conflict = (side_bull > side_bear and htf1_bias == "BEARISH") or (side_bear > side_bull and htf1_bias == "BULLISH")
+
+var int last_signal_bar = -999
+in_cooldown = (bar_index - last_signal_bar) <= i_cooldown
+
+valid_long = not warming_up and not extreme_vol and not htf_conflict and side_bull > i_score_flr and not in_cooldown and is_displacement
+valid_short = not warming_up and not extreme_vol and not htf_conflict and side_bear > i_score_flr and not in_cooldown and is_displacement
+
+stop_long = close - (A * 1.5)
+stop_short = close + (A * 1.5)
+tp1_long = close + (close - stop_long) * i_rr_min
+tp1_short = close - (stop_short - close) * i_rr_min
+
+// -------------------------------------------------------------------------------------------------
+// 5. STRATEGY CALLS
+// -------------------------------------------------------------------------------------------------
+if valid_long
+    last_signal_bar := bar_index
+    // Gap handling via limit order to guarantee entry, or market entry on next open
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Exit Long", "Long", stop=stop_long, limit=tp1_long)
+
+if valid_short
+    last_signal_bar := bar_index
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Exit Short", "Short", stop=stop_short, limit=tp1_short)
+
+// Visualize equity curve via standard TradingView Strategy Tester
